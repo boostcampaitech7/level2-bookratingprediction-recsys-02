@@ -1,0 +1,21 @@
+# config/preprocessing_config.yaml
+data:
+  books_path: "data/books.csv"           # ../data -> data로 수정
+  users_path: "data/users.csv"
+  train_ratings_path: "data/train_ratings.csv"
+  test_ratings_path: "data/test_ratings.csv"
+
+preprocessing:
+  age:
+    fill_method: "median"
+    bins: [0, 20, 30, 40, 50, 60, 100]
+    labels: ["0-20", "21-30", "31-40", "41-50", "51-60", "60+"]
+  
+  category:
+    unknown_value: "unknown"
+    
+  location:
+    unknown_value: "unknown"
+
+features:
+  save_path: "src/features/"             # ./src -> src로 수정
