@@ -71,6 +71,7 @@ def process_context_data(users, books):
     books_['publication_range'] = books_['year_of_publication'].apply(lambda x: x // 10 * 10)  # 1990년대, 2000년대, 2010년대, ...
 
     books_['book_title_len'] = [len(title) for title in books_['book_title']]
+    books_['book_author'] = books_['book_author'].fillna('unknown')
     
     users_['age'] = users_['age'].fillna(users_['age'].mode()[0])
     users_['age_range'] = users_['age'].apply(lambda x: x // 10 * 10)  # 10대, 20대, 30대, ...
@@ -79,24 +80,6 @@ def process_context_data(users, books):
     users_['location_country'] = users_['location_list'].apply(lambda x: x[0])
     users_['location_state'] = users_['location_list'].apply(lambda x: x[1] if len(x) > 1 else np.nan)
     users_['location_city'] = users_['location_list'].apply(lambda x: x[2] if len(x) > 2 else np.nan)
-    # for idx, row in users_.iterrows():
-    #     if (not pd.isna(row['location_state'])) and pd.isna(row['location_country']):
-    #         fill_country = users_[users_['location_state'] == row['location_state']]['location_country'].mode()
-    #         fill_country = fill_country[0] if len(fill_country) > 0 else np.nan
-    #         users_.loc[idx, 'location_country'] = fill_country
-    #     elif (not pd.isna(row['location_city'])) and pd.isna(row['location_state']):
-    #         if not pd.isna(row['location_country']):
-    #             fill_state = users_[(users_['location_country'] == row['location_country']) 
-    #                                 & (users_['location_city'] == row['location_city'])]['location_state'].mode()
-    #             fill_state = fill_state[0] if len(fill_state) > 0 else np.nan
-    #             users_.loc[idx, 'location_state'] = fill_state
-    #         else:
-    #             fill_state = users_[users_['location_city'] == row['location_city']]['location_state'].mode()
-    #             fill_state = fill_state[0] if len(fill_state) > 0 else np.nan
-    #             fill_country = users_[users_['location_city'] == row['location_city']]['location_country'].mode()
-    #             fill_country = fill_country[0] if len(fill_country) > 0 else np.nan
-    #             users_.loc[idx, 'location_country'] = fill_country
-    #             users_.loc[idx, 'location_state'] = fill_state
     
 ########################### 윤혜언니 전처리
     # city와 country가 같은 케이스 찾기
@@ -156,18 +139,31 @@ def process_context_data(users, books):
 
     return users_, books_
 
+
+
+
 def process_train_test_data(train_df, test_df):
     # 1. Train 데이터가 비어있는지 체크
     if train_df.empty:
         raise ValueError("Train DataFrame is empty. Please provide valid data.")
     
-    # 2. Train 데이터에서 사용자별 평균 평점 및 평점 개수 계산
+    # 2. Train 데이터에서 사용자별 평균 평점, 평점 개수 계산
     user_stats_train = train_df.groupby('user_id').agg(
         user_avg_rating=('rating', 'mean'),
         rating_count=('rating', 'count')
     ).reset_index()
 
-    # 3. Train 데이터의 전체 rating의 IQR 계산
+    # 3. 평점이 1개인 유저에 대해서는 분산을 0으로 설정하고, 나머지 유저는 분산 계산
+    def calculate_variance(group):
+        if len(group) == 1:  # 평점이 1개인 경우
+            return 0
+        else:
+            return group.var()  # 평점이 2개 이상인 경우 분산 계산
+
+    # 각 사용자의 평점 분산 계산
+    user_stats_train['user_rating_variance'] = train_df.groupby('user_id')['rating'].apply(calculate_variance).reset_index(drop=True)
+
+    # 4. Train 데이터의 전체 rating의 IQR 계산
     q1 = train_df['rating'].quantile(0.25)
     q3 = train_df['rating'].quantile(0.75)
     iqr = q3 - q1
@@ -176,20 +172,24 @@ def process_train_test_data(train_df, test_df):
     # Test 데이터 사용자 통계 초기화
     user_stats_test = []
 
-    # Test 데이터에서 사용자별 평균 평점 및 평점 개수 계산
+    # 5. Test 데이터에서 사용자별 평균 평점, 평점 개수, 평점 분산 계산
     for user_id in test_df['user_id'].unique():
         if user_id in user_stats_train['user_id'].values:  # train_df에 있는 사용자
-            user_avg_rating = user_stats_train.loc[user_stats_train['user_id'] == user_id, 'user_avg_rating'].values[0]
-            rating_count = user_stats_train.loc[user_stats_train['user_id'] == user_id, 'rating_count'].values[0]
+            user_info = user_stats_train[user_stats_train['user_id'] == user_id].iloc[0]
+            user_avg_rating = user_info['user_avg_rating']
+            rating_count = user_info['rating_count']
+            user_rating_variance = user_info['user_rating_variance']
         else:  # test_df에만 있는 사용자
             user_avg_rating = iqr_mean
             rating_count = 0
-        
+            user_rating_variance = 0  # 평점이 없으면 분산을 0으로 설정
+
         # 사용자 통계 추가
         user_stats_test.append({
             'user_id': user_id,
             'user_avg_rating': user_avg_rating,
-            'rating_count': rating_count
+            'rating_count': rating_count,
+            'user_rating_variance': user_rating_variance
         })
 
     # Test 사용자 통계 DataFrame 생성
@@ -199,17 +199,27 @@ def process_train_test_data(train_df, test_df):
     train_df = train_df.merge(user_stats_train, on='user_id', how='left')
     test_df = test_df.merge(user_stats_test_df, on='user_id', how='left')
 
-    # 책의 개수, 평균 평점, 책을 읽은 고유 사용자 수 계산
+    # 6. 책의 개수, 평균 평점, 책을 읽은 고유 사용자 수, 작가의 평점 분산 계산
     author_stats = train_df.groupby('book_author').agg(
         author_book_count=('isbn', 'nunique'),      # `book_author`별 고유한 책 개수
         author_avg_rating=('rating', 'mean'),       # `book_author`별 평균 평점
-        author_unique_readers=('user_id', 'nunique') # `book_author`별 책을 읽은 고유 사용자 수
+        author_unique_readers=('user_id', 'nunique'), # `book_author`별 책을 읽은 고유 사용자 수
+        author_rating_variance=('rating', lambda x: calculate_variance(x))  # `book_author`별 평점 분산
     ).reset_index()
 
+    # Train과 Test에 작가 통계 추가
     train_df = train_df.merge(author_stats, on='book_author', how='left')
     test_df = test_df.merge(author_stats, on='book_author', how='left')
 
+    test_df['author_book_count'] = test_df['author_book_count'].fillna(0)
+    test_df['author_unique_readers'] = test_df['author_unique_readers'].fillna(0)
+
+
     return train_df, test_df
+
+
+
+
 
 
 
@@ -241,7 +251,7 @@ def context_data_load(args):
     # 베이스라인에서는 가능한 모든 컬럼을 사용하도록 구성하였습니다.
     # NCF를 사용할 경우, idx 0, 1은 각각 user_id, isbn이어야 합니다.
     user_features = ['user_id', 'age_range', 'location_country', 'location_state', 'location_city']
-    book_features = ['isbn', 'book_title', 'book_title_len', 'book_author', 'publisher', 'language', 'category', 'publication_range']
+    book_features = ['isbn', 'book_title', 'book_title_len', 'book_author',  'language',  'publication_range']
     sparse_cols = ['user_id', 'isbn'] + list(set(user_features + book_features) - {'user_id', 'isbn'}) if args.model == 'NCF' \
                    else user_features + book_features
 
@@ -256,8 +266,9 @@ def context_data_load(args):
     train_df, test_df = process_train_test_data(train_df, test_df)
     all_df = pd.concat([train_df, test_df], axis=0)
 
-    sparse_cols = sparse_cols + ['user_avg_rating', 'rating_count', 'author_book_count', 'author_avg_rating', 'author_unique_readers']
+    sparse_cols = sparse_cols + ['user_avg_rating', 'rating_count','user_rating_variance','author_book_count', 'author_avg_rating', 'author_unique_readers','author_rating_variance']
 
+    
     # feature_cols의 데이터만 라벨 인코딩하고 인덱스 정보를 저장
     label2idx, idx2label = {}, {}
     for col in sparse_cols:
