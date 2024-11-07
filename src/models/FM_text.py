@@ -73,7 +73,7 @@ class Text_DeepFM(nn.Module):
 
         # MLP를 통해 dense feature를 학습하는 부분
         self.mlp = MLP_Base(
-                            input_dim=(len(self.field_dims) * self.embed_dim) + 2 * args.word_dim,
+                            input_dim=(len(self.field_dims) * self.embed_dim) + 2 * args.embed_dim,
                             embed_dims=args.mlp_dims,
                             batchnorm=args.batchnorm,
                             dropout=args.dropout,
@@ -104,7 +104,7 @@ class Text_DeepFM(nn.Module):
 
         # deep network를 통해 dense feature를 학습하는 부분
         dense_feature_deep = torch.cat([user_book_embedding.view(-1, len(self.field_dims) * self.embed_dim), 
-                                        user_text_vector, book_text_vector], dim=1)
+                                        user_text_feature.view(-1, self.embed_dim), item_text_feature.view(-1, self.embed_dim)], dim=1)
         output_dnn = self.mlp(dense_feature_deep).squeeze(1)
 
         return output_fm + output_dnn
