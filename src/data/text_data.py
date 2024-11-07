@@ -243,7 +243,17 @@ def text_data_load(args):
     model = AutoModel.from_pretrained(args.model_args[args.model].pretrained_model).to(device=args.device)
     model.eval()
     
-    users_context_, books_context_ = process_context_data(users, books)
+    import os
+    # users_, books_ 있으면 불러오기
+    if os.path.exists(args.dataset.data_path + 'users_context.csv'):
+        users_context_ = pd.read_csv(args.dataset.data_path + 'users_context.csv')
+        books_context_ = pd.read_csv(args.dataset.data_path + 'books_context.csv')
+    
+    else:
+        users_context_, books_context_ = process_context_data(users, books)
+        # users_ books_ 저장
+        users_context_.to_csv(args.dataset.data_path + 'users_context.csv', index=False)
+        books_context_.to_csv(args.dataset.data_path + 'books_context.csv', index=False)
     
     # users_context_.to_csv(args.dataset.data_path + 'users_feature.csv', index=False)
     # books_context_.to_csv(args.dataset.data_path + 'books_feature.csv', index=False)
@@ -262,10 +272,11 @@ def text_data_load(args):
     # 유저 및 책 정보를 합쳐서 데이터 프레임 생성 (단, 베이스라인에서는 user_id, isbn, user_summary_merge_vector, book_summary_vector만 사용함)
     # 사용할 컬럼을 user_features와 book_features에 정의합니다. (단, 모두 범주형 데이터로 가정)
     user_features = ['user_id', 'age_range', 'location_country', 'location_state', 'location_city']
-    book_features = ['isbn', 'book_title', 'book_author', 'publisher', 'language', 'category', 'publication_range']
+    book_features = ['isbn', 'book_author', 'publisher', 'category', 'publication_range']
     
-    user_features = []
-    book_features = []
+    # context feature 사용하지 않는 경우
+    # user_features = []
+    # book_features = []
     
     
     sparse_cols = ['user_id', 'isbn'] + list(set(user_features + book_features) - {'user_id', 'isbn'})
