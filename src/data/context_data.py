@@ -96,6 +96,26 @@ def apply_category_clustering(books, column, threshold=0.7):
     
     return books_
 
+
+def category_imputation(books, columns):
+    books_ = books.copy()
+
+    category_map = (
+        books_[~books_['category'].isna()]  
+        .groupby(columns)['category']  # 지정된 컬럼으로 그룹화
+        .agg(lambda x: x.value_counts().idxmax()) 
+        .reset_index()
+    )
+
+    # 최빈 카테고리 매핑
+    books_ = books_.merge(category_map, on=columns, how='left', suffixes=('', '_most_common'))
+    books_['category'] = books_['category'].combine_first(books_['category_most_common'])
+
+    books_ = books_.drop(columns=['category_most_common'])
+    return books_
+
+
+
 def process_context_data(users, books):
     """
     Parameters
@@ -140,6 +160,8 @@ def process_context_data(users, books):
     books_ = apply_category_clustering(books_, 'category_clustered', 0.7)
     etc_lst = books_.groupby('category_clustered_clustered')['category'].nunique()[books_.groupby('category_clustered_clustered')['category'].nunique() == 1].index
     books_['category'] = np.where(books_.category_clustered_clustered.isin(etc_lst), 'etc', books_.category_clustered_clustered)
+    books_ = category_imputation(books_, ['book_title', 'book_author']) # 1차. 동일 제목, 작가에 대해 결측치 보간
+    books_ = category_imputation(books_, ['book_author']) # 2차. 동일 작가에 대해 결측치 보간
     
     books_['publication_range'] = books_['year_of_publication'].apply(lambda x: x // 10 * 10)  # 1990년대, 2000년대, 2010년대, ...
 
