@@ -91,6 +91,23 @@ def apply_category_clustering(books, column, threshold=0.7):
     return books_
 
 
+def category_imputation(books, columns):
+    books_ = books.copy()
+
+    category_map = (
+        books_[~books_['category'].isna()]  
+        .groupby(columns)['category']  # 지정된 컬럼으로 그룹화
+        .agg(lambda x: x.value_counts().idxmax()) 
+        .reset_index()
+    )
+
+    # 최빈 카테고리 매핑
+    books_ = books_.merge(category_map, on=columns, how='left', suffixes=('', '_most_common'))
+    books_['category'] = books_['category'].combine_first(books_['category_most_common'])
+
+    books_ = books_.drop(columns=['category_most_common'])
+    return books_
+
 def process_context_data(users, books):
     """
     Parameters
@@ -118,7 +135,7 @@ def process_context_data(users, books):
 
     users_ = users.copy()
     books_ = books.copy()
-    
+
     # language 결측치 보간
     books_['isbn_code'] = books_.isbn.apply(lambda x : x[:2])
     code_book = books_[['isbn_code', 'language']].drop_duplicates()
@@ -127,18 +144,16 @@ def process_context_data(users, books):
     code_dict = {isbn: codes for isbn, codes in code_book.index}
     books_.loc[books_['language'].isna(), 'language'] = books_.loc[books_['language'].isna(), 'isbn_code'].map(code_dict)
     books_['language'] = books_['language'].fillna(books_['language'].mode()[0])
-    
-    
-     # category 통합
+
+    # category 통합
     books_['category'] = books_['category'].apply(lambda x: str2list(x)[0].replace('\'','').replace('\"','').lower() if not pd.isna(x) else np.nan)
     books_ = apply_category_clustering(books_, 'category', 0.7)
     books_ = apply_category_clustering(books_, 'category_clustered', 0.7)
     etc_lst = books_.groupby('category_clustered_clustered')['category'].nunique()[books_.groupby('category_clustered_clustered')['category'].nunique() == 1].index
     books_['category'] = np.where(books_.category_clustered_clustered.isin(etc_lst), 'etc', books_.category_clustered_clustered)
-    
-    
-    books_['category'] = books_['category'].apply(lambda x: str2list(x)[0] if not pd.isna(x) else np.nan)
-    books_['language'] = books_['language'].fillna(books_['language'].mode()[0])
+    books_ = category_imputation(books_, ['book_title', 'book_author']) # 1차. 동일 제목, 작가에 대해 결측치 보간
+    books_ = category_imputation(books_, ['book_author']) # 2차. 동일 작가에 대해 결측치 보간
+
     books_['publication_range'] = books_['year_of_publication'].apply(lambda x: x // 10 * 10)  # 1990년대, 2000년대, 2010년대, ...
 
     books_['book_title_len'] = [len(title) for title in books_['book_title']]
@@ -152,7 +167,7 @@ def process_context_data(users, books):
     users_['location_country'] = users_['location_list'].apply(lambda x: x[0])
     users_['location_state'] = users_['location_list'].apply(lambda x: x[1] if len(x) > 1 else np.nan)
     users_['location_city'] = users_['location_list'].apply(lambda x: x[2] if len(x) > 2 else np.nan)
-    
+
     # city와 country가 같은 케이스 찾기
     city_country_pairs = users_.dropna(subset = 'location_state')
     city_country_pairs = city_country_pairs.groupby(['location_city', 'location_country'])['location_state'].nunique()[users_.groupby(['location_city', 'location_country'])['location_state'].nunique() > 1].reset_index().dropna().sort_values('location_state')
@@ -207,89 +222,8 @@ def process_context_data(users, books):
     
         
     users_ = users_.drop(['location'], axis=1)
-
+    books_ = books_.drop(['isbn_code', 'category_clustered', 'category_clustered_clustered'], axis=1)
     return users_, books_
-
-
-
-
-def process_train_test_data(train_df, test_df):
-    # 1. Train 데이터가 비어있는지 체크
-    if train_df.empty:
-        raise ValueError("Train DataFrame is empty. Please provide valid data.")
-    
-    # 2. Train 데이터에서 사용자별 평균 평점, 평점 개수 계산
-    user_stats_train = train_df.groupby('user_id').agg(
-        user_avg_rating=('rating', 'mean'),
-        rating_count=('rating', 'count')
-    ).reset_index()
-
-    # 3. 평점이 1개인 유저에 대해서는 분산을 0으로 설정하고, 나머지 유저는 분산 계산
-    def calculate_variance(group):
-        if len(group) == 1:  # 평점이 1개인 경우
-            return 0
-        else:
-            return group.var()  # 평점이 2개 이상인 경우 분산 계산
-
-    # 각 사용자의 평점 분산 계산
-    user_stats_train['user_rating_variance'] = train_df.groupby('user_id')['rating'].apply(calculate_variance).reset_index(drop=True)
-
-    # IQR 평균
-    q1 = train_df['rating'].quantile(0.25)
-    q3 = train_df['rating'].quantile(0.75)
-    iqr = q3 - q1
-    iqr_mean = train_df['rating'][(train_df['rating'] >= (q1 - 1.5 * iqr)) & (train_df['rating'] <= (q3 + 1.5 * iqr))].mean()
-
-    user_stats_test = []
-
-    # 5. Test 데이터에서 사용자별 평균 평점, 평점 개수, 평점 분산 계산
-    for user_id in test_df['user_id'].unique():
-        if user_id in user_stats_train['user_id'].values:  # train_df에 있는 사용자
-            user_info = user_stats_train[user_stats_train['user_id'] == user_id].iloc[0]
-            user_avg_rating = user_info['user_avg_rating']
-            rating_count = user_info['rating_count']
-            user_rating_variance = user_info['user_rating_variance']
-        else:  # test_df에만 있는 사용자
-            user_avg_rating = iqr_mean
-            rating_count = 0
-            user_rating_variance = 0  # 평점이 없으면 분산을 0으로 설정
-
-        # 사용자 통계 추가
-        user_stats_test.append({
-            'user_id': user_id,
-            'user_avg_rating': user_avg_rating,
-            'rating_count': rating_count,
-            'user_rating_variance': user_rating_variance
-        })
-
-    # Test 사용자 통계 DataFrame 생성
-    user_stats_test_df = pd.DataFrame(user_stats_test)
-
-    # Train과 Test 사용자 통계 데이터 합치기
-    train_df = train_df.merge(user_stats_train, on='user_id', how='left')
-    test_df = test_df.merge(user_stats_test_df, on='user_id', how='left')
-
-    # book_author 변수
-    author_stats = train_df.groupby('book_author').agg(
-        author_book_count=('isbn', 'nunique'),      # `book_author`별 고유한 책 개수
-        author_avg_rating=('rating', 'mean'),       # `book_author`별 평균 평점
-        author_unique_readers=('user_id', 'nunique'), # `book_author`별 책을 읽은 고유 사용자 수
-        author_rating_variance=('rating', lambda x: calculate_variance(x))  # `book_author`별 평점 분산
-    ).reset_index()
-
-    # Train과 Test에 book_author 변수 추가
-    train_df = train_df.merge(author_stats, on='book_author', how='left')
-    test_df = test_df.merge(author_stats, on='book_author', how='left')
-
-    test_df['author_book_count'] = test_df['author_book_count'].fillna(0)
-    test_df['author_unique_readers'] = test_df['author_unique_readers'].fillna(0)
-
-
-    return train_df, test_df
-
-    
-
-
 
 def context_data_load(args):
     """
@@ -313,15 +247,13 @@ def context_data_load(args):
 
     users_, books_ = process_context_data(users, books)
     
-    # books_ 데이터프레임에 title 임베딩을 추가
-    reduced_embeddings = np.load(args.dataset.data_path + 'reduced_embeddings_title_1.npy')
-    embedding_df = pd.DataFrame(reduced_embeddings, columns=[f"embedding_{i}" for i in  range(reduced_embeddings.shape[1])])
-    books_ = pd.concat([books_, embedding_df], axis=1)
-
-    
+    # 유저 및 책 정보를 합쳐서 데이터 프레임 생성
     # 사용할 컬럼을 user_features와 book_features에 정의합니다. (단, 모두 범주형 데이터로 가정)
+    # 베이스라인에서는 가능한 모든 컬럼을 사용하도록 구성하였습니다.
+    # NCF를 사용할 경우, idx 0, 1은 각각 user_id, isbn이어야 합니다.
     user_features = ['user_id', 'age_range', 'location_country', 'location_state', 'location_city']
-    book_features = ['isbn', 'book_title_len', 'book_author',  'language',  'publication_range','publisher','category'] +  [f"embedding_{i}" for i in range(reduced_embeddings.shape[1])] # , 'book_title'
+    book_features = ['isbn', 'book_title', 'book_author', 'publisher', 'language', 'category', 'publication_range']
+
     sparse_cols = ['user_id', 'isbn'] + list(set(user_features + book_features) - {'user_id', 'isbn'}) if args.model == 'NCF' \
                    else user_features + book_features
 
@@ -330,14 +262,9 @@ def context_data_load(args):
                     .merge(books_, on='isbn', how='left')[sparse_cols + ['rating']]
     test_df = test.merge(users_, on='user_id', how='left')\
                   .merge(books_, on='isbn', how='left')[sparse_cols]
-    
 
-    train_df, test_df = process_train_test_data(train_df, test_df)    
     all_df = pd.concat([train_df, test_df], axis=0)
 
-    sparse_cols = sparse_cols + ['user_avg_rating','rating_count','user_rating_variance','author_book_count', 'author_avg_rating','author_unique_readers','author_rating_variance']
-
-    
     # feature_cols의 데이터만 라벨 인코딩하고 인덱스 정보를 저장
     label2idx, idx2label = {}, {}
     for col in sparse_cols:
@@ -353,7 +280,7 @@ def context_data_load(args):
     
     
     field_dims = [len(label2idx[col]) for col in train_df.columns if col != 'rating']
-    
+
     data = {
             'train':train_df,
             'test':test_df,
