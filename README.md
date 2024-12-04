@@ -4,7 +4,7 @@
 마나 평점을 부여**할지에 대해 예측합니다.
 해당 경진대회는 소비자들의 책 구매 결정에 대한 도움을 주기 위한 **개인화된 상품 추천 대회**입니다.
 
-자세한 프로젝트 내용은 [Wrap-up Report](https://github.com/boostcampaitech7/level2-bookratingprediction-recsys-02/blob/main/Wrap_Up_Report_Book_Recommendation.pdf) 와 [발표PPT](https://github.com/boostcampaitech7/level2-bookratingprediction-recsys-02/blob/main/%EB%B0%9C%ED%91%9C%EC%9E%90%EB%A3%8C_Book_Recommendation.pdf)를 통해 확인해주세요.
+자세한 프로젝트 내용은 [Wrap-up Report](https://github.com/boostcampaitech7/level2-bookratingprediction-recsys-02/blob/main/Wrap_Up_Report_Book_Recommendation.pdf) 와 [발표 PPT](https://github.com/boostcampaitech7/level2-bookratingprediction-recsys-02/blob/main/%EB%B0%9C%ED%91%9C%EC%9E%90%EB%A3%8C_Book_Recommendation.pdf)를 통해 확인해주세요.
 
 ## 💡Team
 #### 팀 구성
